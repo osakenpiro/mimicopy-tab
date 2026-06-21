@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>耳コピ→TAB 自動採譜 v0 — mimicopy-tab</title>
+<meta name="description" content="音声ファイルをブラウザ内でMIDI化し、運指最適化でギターTAB譜に自動採譜。アップロード不要。#全人類UX改善計画" />
+<style>
+  :root{
+    --void:#0a0a12; --void2:#0f0f1a; --panel:#15151f; --line:#26263a;
+    --gold:#d4a853; --gold-dim:#9a7c3e; --ink:#ece8df; --ink-dim:#9b97a8;
+    --ok:#7fb069; --warn:#c97d56; --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:
+      radial-gradient(1100px 600px at 78% -8%, rgba(212,168,83,.10), transparent 60%),
+      radial-gradient(900px 700px at 12% 110%, rgba(212,168,83,.05), transparent 55%),
+      var(--void);
+    color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+    line-height:1.6; min-height:100vh; padding:28px 18px 80px;
+  }
+  /* faint starfield */
+  body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.5;
+    background-image:radial-gradient(1px 1px at 20% 30%,#fff2,transparent),radial-gradient(1px 1px at 70% 60%,#fff1,transparent),radial-gradient(1px 1px at 40% 80%,#fff2,transparent),radial-gradient(1px 1px at 85% 20%,#fff1,transparent),radial-gradient(1px 1px at 55% 45%,#fff1,transparent);}
+  .wrap{max-width:920px;margin:0 auto}
+  header{text-align:center;margin-bottom:22px}
+  h1{font-size:1.5rem;margin:0 0 4px;letter-spacing:.02em}
+  h1 .g{color:var(--gold)}
+  .sub{color:var(--ink-dim);font-size:.86rem;margin:0}
+  .lantern{font-size:1.4rem}
+  .card{background:linear-gradient(180deg,var(--panel),var(--void2));border:1px solid var(--line);border-radius:14px;padding:18px 18px;margin:14px 0;box-shadow:0 1px 0 #ffffff08 inset}
+  .drop{border:1.5px dashed var(--gold-dim);border-radius:12px;padding:26px 16px;text-align:center;cursor:pointer;transition:.15s;background:#ffffff03}
+  .drop:hover,.drop.hot{border-color:var(--gold);background:rgba(212,168,83,.06)}
+  .drop b{color:var(--gold)}
+  .drop small{color:var(--ink-dim);display:block;margin-top:6px}
+  input[type=file]{display:none}
+  .controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px 16px;margin-top:6px}
+  label.ctl{display:flex;flex-direction:column;gap:5px;font-size:.78rem;color:var(--ink-dim)}
+  label.ctl span{display:flex;justify-content:space-between}
+  label.ctl b{color:var(--ink);font-variant-numeric:tabular-nums}
+  select,input[type=number]{background:var(--void);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:.9rem;font-family:inherit}
+  input[type=range]{accent-color:var(--gold);width:100%}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:14px}
+  button{font-family:inherit;font-size:.95rem;font-weight:600;border-radius:10px;border:1px solid var(--gold-dim);padding:11px 20px;cursor:pointer;transition:.15s}
+  .go{background:var(--gold);color:#1a1408;border-color:var(--gold)}
+  .go:hover{filter:brightness(1.08)}
+  .ghost{background:transparent;color:var(--gold);}
+  .ghost:hover{background:rgba(212,168,83,.08)}
+  button:disabled{opacity:.4;cursor:not-allowed;filter:none}
+  .bar{height:7px;border-radius:6px;background:var(--void);border:1px solid var(--line);overflow:hidden;margin-top:14px;display:none}
+  .bar.show{display:block}
+  .bar>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--gold-dim),var(--gold));transition:width .2s}
+  .status{font-size:.82rem;color:var(--ink-dim);margin-top:10px;min-height:1.2em}
+  .status .ok{color:var(--ok)} .status .warn{color:var(--warn)} .status .g{color:var(--gold)}
+  pre.tab{font-family:var(--mono);font-size:.82rem;line-height:1.5;background:var(--void);border:1px solid var(--line);border-radius:10px;padding:14px;overflow:auto;white-space:pre;color:var(--ink);margin:0}
+  h3{font-size:.95rem;color:var(--gold);margin:2px 0 10px;font-weight:600}
+  table{width:100%;border-collapse:collapse;font-size:.8rem;font-variant-numeric:tabular-nums}
+  th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line)}
+  th{color:var(--ink-dim);font-weight:500}
+  td.x{color:var(--warn)}
+  .pill{display:inline-block;font-size:.7rem;color:var(--ink-dim);border:1px solid var(--line);border-radius:999px;padding:2px 9px;margin-left:6px}
+  .hide{display:none}
+  footer{text-align:center;color:var(--ink-dim);font-size:.72rem;margin-top:26px;line-height:1.7}
+  footer a{color:var(--gold-dim);text-decoration:none}
+  .note-meta{color:var(--ink-dim);font-size:.78rem;margin:0 0 10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="lantern">🏮</div>
+    <h1>耳コピ→<span class="g">TAB</span> 自動採譜 <span class="pill">v0</span></h1>
+    <p class="sub">音声ファイル → AIでMIDI化 → 運指最適化でギターTAB譜へ。全部ブラウザの中。アップロードなし。</p>
+  </header>
+
+  <div class="card">
+    <label class="drop" id="drop" for="file">
+      <b>音声ファイルをドロップ</b> または クリックして選択
+      <small>mp3 / wav / m4a / flac / ogg ＝ ブラウザ内で解析（あなたの音は外に出ない）</small>
+    </label>
+    <input type="file" id="file" accept="audio/*" />
+    <div class="status" id="loadStatus">モデル準備中…</div>
+  </div>
+
+  <div class="card">
+    <h3>採譜設定</h3>
+    <div class="controls">
+      <label class="ctl">モード
+        <select id="mode">
+          <option value="mono">単音（メロディ）</option>
+          <option value="poly">和音（ポリ）</option>
+        </select>
+      </label>
+      <label class="ctl">カポ
+        <select id="capo">
+          <option>0</option><option>1</option><option selected>2</option><option>3</option>
+          <option>4</option><option>5</option><option>6</option><option>7</option>
+        </select>
+      </label>
+      <label class="ctl">最大フレット
+        <input type="number" id="maxFret" value="15" min="5" max="24" />
+      </label>
+      <label class="ctl"><span>オンセット感度 <b id="onV">0.50</b></span>
+        <input type="range" id="onset" min="0.05" max="0.9" step="0.05" value="0.5" />
+      </label>
+      <label class="ctl"><span>フレーム感度 <b id="frV">0.30</b></span>
+        <input type="range" id="frame" min="0.05" max="0.9" step="0.05" value="0.3" />
+      </label>
+      <label class="ctl">最短ノート長(frame)
+        <input type="number" id="minLen" value="5" min="1" max="30" />
+      </label>
+    </div>
+    <div class="row">
+      <button class="go" id="run" disabled>採譜する</button>
+      <button class="ghost hide" id="dlMidi">MIDIをダウンロード</button>
+      <button class="ghost hide" id="dlTab">TABをコピー</button>
+    </div>
+    <div class="bar" id="bar"><i id="barFill"></i></div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="card hide" id="tabCard">
+    <h3>TAB譜 <span class="pill" id="tabMeta"></span></h3>
+    <p class="note-meta">標準チューニング EADGBE ／ フレット番号はカポ基準。タイミングは非量子化（原演奏のニュアンス保持）。</p>
+    <pre class="tab" id="tabOut"></pre>
+  </div>
+
+  <div class="card hide" id="listCard">
+    <h3>ノート一覧</h3>
+    <div style="max-height:320px;overflow:auto">
+      <table id="noteTable">
+        <thead><tr><th>#</th><th>時刻(s)</th><th>長さ</th><th>音名</th><th>弦-フレット</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer>
+    採譜エンジン = <a href="https://github.com/spotify/basic-pitch-ts" target="_blank" rel="noopener">Spotify Basic Pitch</a>（Apache-2.0, TF.js）／ 運指ソルバ = 自前（フレットボードDP）<br/>
+    #全人類UX改善計画 ・ TRBP T柱 Hi-Me TooL ・ <a href="https://github.com/osakenpiro/mimicopy-tab" target="_blank" rel="noopener">source</a>
+  </footer>
+</div>
+
+<script type="module">
+/* ============================================================
+   mimicopy-tab v0  —  audio → MIDI(Basic Pitch) → TAB(自前ソルバ)
+   ============================================================ */
+
+const MODEL_URL = "https://cdn.jsdelivr.net/npm/@spotify/basic-pitch@1.0.1/model/model.json";
+const BP_ESM    = "https://esm.sh/@spotify/basic-pitch@1.0.1";
+const MIDI_ESM  = "https://esm.sh/@tonejs/midi@2.0.28";
+
+/* ---- DOM ---- */
+const $ = id => document.getElementById(id);
+const drop=$("drop"), fileInput=$("file"), runBtn=$("run");
+const loadStatus=$("loadStatus"), statusEl=$("status");
+const bar=$("bar"), barFill=$("barFill");
+const tabCard=$("tabCard"), tabOut=$("tabOut"), tabMeta=$("tabMeta");
+const listCard=$("listCard"), noteTbody=$("noteTable").querySelector("tbody");
+const dlMidi=$("dlMidi"), dlTab=$("dlTab");
+
+$("onset").addEventListener("input",e=>$("onV").textContent=(+e.target.value).toFixed(2));
+$("frame").addEventListener("input",e=>$("frV").textContent=(+e.target.value).toFixed(2));
+
+function setStatus(html,cls){ statusEl.innerHTML = cls?`<span class="${cls}">${html}</span>`:html; }
+function setProgress(p){ bar.classList.add("show"); barFill.style.width=Math.round(p*100)+"%"; }
+function hideProgress(){ bar.classList.remove("show"); barFill.style.width="0"; }
+
+/* ---- lazy module + model ---- */
+let _bp=null, _model=null, _midiLib=null;
+async function bpLib(){ if(!_bp) _bp=await import(BP_ESM); return _bp; }
+async function model(){
+  if(_model) return _model;
+  const { BasicPitch } = await bpLib();
+  _model = new BasicPitch(MODEL_URL);
+  return _model;
+}
+async function midiLib(){ if(!_midiLib) _midiLib=await import(MIDI_ESM); return _midiLib; }
+
+/* preload so 疎通 is visible immediately */
+(async()=>{
+  try{
+    loadStatus.innerHTML='<span class="g">採譜エンジン読込中…</span>（初回 ~1MB / 以後キャッシュ）';
+    await model();
+    loadStatus.innerHTML='<span class="ok">●</span> 採譜エンジン準備OK。音声ファイルをどうぞ。';
+    refreshRun();
+  }catch(err){
+    loadStatus.innerHTML='<span class="warn">読込失敗:</span> '+(err&&err.message||err)+'（ネット/CDNを確認）';
+    console.error("[mimicopy-tab] model load failed",err);
+  }
+})();
+
+/* ---- file handling ---- */
+let currentFile=null;
+drop.addEventListener("dragover",e=>{e.preventDefault();drop.classList.add("hot");});
+drop.addEventListener("dragleave",()=>drop.classList.remove("hot"));
+drop.addEventListener("drop",e=>{e.preventDefault();drop.classList.remove("hot");if(e.dataTransfer.files[0])pickFile(e.dataTransfer.files[0]);});
+fileInput.addEventListener("change",e=>{if(e.target.files[0])pickFile(e.target.files[0]);});
+function pickFile(f){ currentFile=f; drop.querySelector("b").textContent="🎵 "+f.name; refreshRun(); }
+function refreshRun(){ runBtn.disabled = !(currentFile && _model); }
+
+/* ---- audio prep: decode → mono → 22050 resample ---- */
+async function prepareAudio(arrayBuffer){
+  const target=22050;
+  const ctx=new (window.AudioContext||window.webkitAudioContext)();
+  const decoded=await ctx.decodeAudioData(arrayBuffer.slice(0));
+  await ctx.close();
+  const n=decoded.length, chs=decoded.numberOfChannels;
+  const mono=new Float32Array(n);
+  for(let i=0;i<n;i++){let s=0;for(let c=0;c<chs;c++)s+=decoded.getChannelData(c)[i];mono[i]=s/chs;}
+  if(decoded.sampleRate===target) return mono;
+  const ratio=target/decoded.sampleRate, m=Math.floor(n*ratio), out=new Float32Array(m);
+  for(let i=0;i<m;i++){const pos=i/ratio,idx=Math.floor(pos),frac=pos-idx;const a=mono[idx]||0,b=mono[idx+1]||mono[idx]||0;out[i]=a+(b-a)*frac;}
+  return out;
+}
+
+/* ---- inference ---- */
+async function audioToNotes(audioData,onsetTh,frameTh,minLen){
+  const md=await model();
+  const { outputToNotesPoly, addPitchBendsToNoteEvents, noteFramesToTime }=await bpLib();
+  const frames=[],onsets=[],contours=[];
+  await md.evaluateModel(audioData,
+    (f,o,c)=>{frames.push(...f);onsets.push(...o);contours.push(...c);},
+    (p)=>setProgress(p));
+  return noteFramesToTime(addPitchBendsToNoteEvents(contours,
+           outputToNotesPoly(frames,onsets,onsetTh,frameTh,minLen)));
+}
+
+/* ============================================================
+   自前ソルバ：MIDI → TAB（フレットボード × DP / バックトラック）
+   ============================================================ */
+const STD_TUNING=[40,45,50,55,59,64];           // 弦 0=6th(低E) … 5=1st(高e)
+const STRING_LABELS=["E","A","D","G","B","e"];
+const NOTE_NAMES=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+const noteName=m=>NOTE_NAMES[((m%12)+12)%12]+(Math.floor(m/12)-1);
+const W={FRET:1.0,STRING:0.4,POS:0.15,SPAN:1.2,HANDMOVE:0.6};
+const HAND_SPAN=4, CHORD_TOL=0.06;
+
+function candidates(midi,capo,maxFret){
+  const out=[];
+  for(let s=0;s<6;s++){const open=STD_TUNING[s]+capo;const fret=midi-open;if(fret>=0&&fret<=maxFret)out.push({string:s,fret});}
+  return out;
+}
+const X={string:-1,fret:-1,X:true};
+const nodeCost=c=> c.X?0:(c.fret===0?0:W.POS*c.fret);
+function edgeCost(a,b){
+  if(a.X||b.X) return 0;
+  const h=(a.fret===0||b.fret===0)?0:Math.abs(a.fret-b.fret);
+  return W.FRET*h + W.STRING*Math.abs(a.string-b.string);
+}
+
+/* 単音：層状グラフ上のViterbi（総移動コスト最小） */
+function solveMono(seq,capo,maxFret){
+  const layers=seq.map(m=>{const c=candidates(m,capo,maxFret);return c.length?c:[X];});
+  const n=layers.length; if(!n) return [];
+  const dp=[],bp=[];
+  for(let i=0;i<n;i++){
+    dp.push([]);bp.push([]);
+    for(let k=0;k<layers[i].length;k++){
+      if(i===0){dp[i][k]=nodeCost(layers[i][k]);bp[i][k]=-1;continue;}
+      let best=Infinity,bj=0;
+      for(let j=0;j<layers[i-1].length;j++){const v=dp[i-1][j]+edgeCost(layers[i-1][j],layers[i][k]);if(v<best){best=v;bj=j;}}
+      dp[i][k]=nodeCost(layers[i][k])+best;bp[i][k]=bj;
+    }
+  }
+  let bk=0,bv=Infinity;for(let k=0;k<dp[n-1].length;k++)if(dp[n-1][k]<bv){bv=dp[n-1][k];bk=k;}
+  const path=new Array(n);for(let i=n-1;i>=0;i--){path[i]=layers[i][bk];bk=bp[i][bk]<0?0:bp[i][bk];}
+  return path.map((p,i)=>({midi:seq[i],string:p.string,fret:p.fret,X:!!p.X}));
+}
+
+/* 和音：弦割当バックトラック＋スパン制約＋前和音への近さ */
+function solveChord(pitches,prevHand,capo,maxFret){
+  const ps=[...new Set(pitches)].sort((a,b)=>b-a).slice(0,6);   // 高音優先・最大6
+  const cand=ps.map(p=>candidates(p,capo,maxFret));
+  const used=new Array(6).fill(false), cur=new Array(ps.length).fill(null);
+  let best=null;
+  const spanInfo=()=>{let mn=Infinity,mx=-Infinity,sum=0,cnt=0;
+    for(const a of cur){if(a&&!a.X&&a.fret>0){mn=Math.min(mn,a.fret);mx=Math.max(mx,a.fret);sum+=a.fret;cnt++;}}
+    return{span:mx<0?0:mx-mn,minF:cnt?mn:null,hand:cnt?sum/cnt:null};};
+  const spanOk=()=>spanInfo().span<=HAND_SPAN;
+  function rec(i){
+    if(i===ps.length){const si=spanInfo();let sc=W.SPAN*si.span+W.POS*(si.hand||0);
+      if(prevHand!=null&&si.hand!=null)sc+=W.HANDMOVE*Math.abs(si.hand-prevHand);
+      if(!best||sc<best.sc)best={sc,assign:cur.map(a=>({...a}))};return;}
+    const usable=cand[i].filter(c=>!used[c.string]);
+    if(!usable.length){cur[i]={...X};rec(i+1);cur[i]=null;return;}
+    for(const c of usable){cur[i]=c;used[c.string]=true;if(spanOk())rec(i+1);used[c.string]=false;cur[i]=null;}
+  }
+  rec(0);
+  const assign=best?best.assign:ps.map(()=>({...X}));
+  const si=(()=>{let sum=0,cnt=0,mn=Infinity;for(const a of assign){if(a&&!a.X&&a.fret>0){sum+=a.fret;cnt++;mn=Math.min(mn,a.fret);}}return{minF:cnt?mn:null};})();
+  return{notes:ps.map((p,i)=>({midi:p,string:assign[i].string,fret:assign[i].fret,X:!!assign[i].X})),nextHand:si.minF!=null?si.minF:prevHand};
+}
+
+/* onset近接でチャンク化 */
+function groupChords(notes,tol){
+  const sorted=[...notes].sort((a,b)=>a.startTimeSeconds-b.startTimeSeconds);
+  const groups=[];let cur=null;
+  for(const nt of sorted){
+    if(cur&&Math.abs(nt.startTimeSeconds-cur.t)<=tol)cur.notes.push(nt);
+    else{cur={t:nt.startTimeSeconds,notes:[nt]};groups.push(cur);}
+  }
+  return groups;
+}
+
+/* ---- TAB renderer ---- */
+function renderTab(columns){
+  if(!columns.length) return "(ノートが検出されませんでした)";
+  const widths=columns.map(col=>{let w=1;for(let s=0;s<6;s++){const v=col[s];if(v!=null){w=Math.max(w,String(v).length);}}return w;});
+  const lines=[];
+  for(let s=5;s>=0;s--){
+    let line=STRING_LABELS[s]+"|";
+    for(let c=0;c<columns.length;c++){
+      const v=columns[c][s], w=widths[c];
+      let cell = (v==null) ? "-".repeat(w) : (String(v)+"-".repeat(w-String(v).length));
+      line+="-"+cell+"-";
+      if((c+1)%8===0 && c<columns.length-1) line+="|";
+    }
+    lines.push(line+"|");
+  }
+  return lines.join("\n");
+}
+
+/* ---- orchestrate ---- */
+let lastNotes=null, lastTabText="";
+runBtn.addEventListener("click",async()=>{
+  if(!currentFile) return;
+  runBtn.disabled=true; tabCard.classList.add("hide"); listCard.classList.add("hide");
+  dlMidi.classList.add("hide"); dlTab.classList.add("hide");
+  try{
+    setStatus("音声をデコード中…"); setProgress(0.02);
+    const buf=await currentFile.arrayBuffer();
+    const audio=await prepareAudio(buf);
+    setStatus('<span class="g">AIが聴音中…</span>（長さに応じ数秒〜十数秒）');
+    const onsetTh=+$("onset").value, frameTh=+$("frame").value, minLen=+$("minLen").value;
+    const notes=await audioToNotes(audio,onsetTh,frameTh,minLen);
+    hideProgress();
+    if(!notes.length){ setStatus("ノートが検出されませんでした。感度を下げる/単旋律の素材で再試行を。","warn"); runBtn.disabled=false; return; }
+    lastNotes=notes;
+
+    const capo=+$("capo").value, maxFret=+$("maxFret").value, mode=$("mode").value;
+    let columns=[], rows=[];
+
+    if(mode==="mono"){
+      // 各onsetグループの最高音をメロディ採用
+      const groups=groupChords(notes,CHORD_TOL).map(g=>{
+        const top=g.notes.reduce((a,b)=>b.pitchMidi>a.pitchMidi?b:a); return {...top}; });
+      const seq=groups.map(g=>g.pitchMidi);
+      const placed=solveMono(seq,capo,maxFret);
+      placed.forEach((p,i)=>{
+        const col=new Array(6).fill(null); if(!p.X) col[p.string]=p.fret; columns.push(col);
+        rows.push({t:groups[i].startTimeSeconds,dur:groups[i].durationSeconds,midi:p.midi,p});
+      });
+    } else {
+      const groups=groupChords(notes,CHORD_TOL);
+      let hand=null;
+      groups.forEach(g=>{
+        const res=solveChord(g.notes.map(n=>n.pitchMidi),hand,capo,maxFret); hand=res.nextHand;
+        const col=new Array(6).fill(null);
+        res.notes.forEach(p=>{ if(!p.X) col[p.string]=p.fret; });
+        columns.push(col);
+        res.notes.forEach(p=>rows.push({t:g.t,dur:g.notes[0].durationSeconds,midi:p.midi,p}));
+      });
+    }
+
+    lastTabText=renderTab(columns);
+    tabOut.textContent=lastTabText;
+    tabMeta.textContent=`${columns.length}列 / カポ${capo} / ${mode==="mono"?"単音":"和音"}`;
+    tabCard.classList.remove("hide");
+
+    // note list
+    noteTbody.innerHTML="";
+    rows.sort((a,b)=>a.t-b.t).forEach((r,i)=>{
+      const tr=document.createElement("tr");
+      const sf = r.p.X ? `<span>範囲外</span>` : `${STRING_LABELS[r.p.string]}弦 ${r.p.fret}f`;
+      tr.innerHTML=`<td>${i+1}</td><td>${r.t.toFixed(2)}</td><td>${r.dur.toFixed(2)}</td><td>${noteName(r.midi)}</td><td class="${r.p.X?'x':''}">${sf}</td>`;
+      noteTbody.appendChild(tr);
+    });
+    listCard.classList.remove("hide");
+
+    const xCount=rows.filter(r=>r.p.X).length;
+    setStatus(`<span class="ok">●</span> 採譜完了：${notes.length}音検出${xCount?` / うち${xCount}音は音域外（カポ/最大フレット調整を）`:""}`);
+    dlMidi.classList.remove("hide"); dlTab.classList.remove("hide");
+  }catch(err){
+    hideProgress(); console.error("[mimicopy-tab] transcribe failed",err);
+    setStatus("失敗: "+(err&&err.message||err),"warn");
+  }finally{ runBtn.disabled=false; }
+});
+
+/* ---- exports ---- */
+dlTab.addEventListener("click",async()=>{
+  try{ await navigator.clipboard.writeText(lastTabText); setStatus('<span class="ok">●</span> TABをコピーしました'); }
+  catch{ setStatus("コピー不可（手動で選択を）","warn"); }
+});
+dlMidi.addEventListener("click",async()=>{
+  if(!lastNotes) return;
+  try{
+    const { Midi }=await midiLib();
+    const midi=new Midi(); const track=midi.addTrack();
+    lastNotes.forEach(n=>track.addNote({midi:n.pitchMidi,time:n.startTimeSeconds,duration:Math.max(0.05,n.durationSeconds),velocity:Math.min(1,Math.max(0,n.amplitude||0.7))}));
+    const blob=new Blob([midi.toArray()],{type:"audio/midi"});
+    const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+    a.download=(currentFile?currentFile.name.replace(/\.[^.]+$/,""):"mimicopy")+".mid"; a.click();
+    URL.revokeObjectURL(a.href);
+  }catch(err){ setStatus("MIDI書き出し失敗: "+(err&&err.message||err),"warn"); }
+});
+</script>
+</body>
+</html>

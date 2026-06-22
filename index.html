@@ -238,7 +238,7 @@ const PRESETS={
 };
 const NOTE_NAMES=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
 const noteName=m=>NOTE_NAMES[((m%12)+12)%12]+(Math.floor(m/12)-1);
-const W={FRET:1.0,STRING:0.4,POS:0.15,SPAN:1.2,HANDMOVE:0.6};
+const W={FRET:1.0,STRING:0.4,POS:0.15,SPAN:1.2,HANDMOVE:0.6,SPANTIE:0.1,HIGHPOS:0.35,DROP:1.1};
 const HAND_SPAN=4, CHORD_TOL=0.06, TOPM=8;
 const X={string:-1,fret:-1,X:true};
 
@@ -275,15 +275,17 @@ function chordVoicings(pitches,tuning,capo,maxFret){
   const cand=ps.map(p=>candidates(p,tuning,capo,maxFret));
   const used=new Array(tuning.length).fill(false), cur=new Array(ps.length).fill(null);
   const voic=[];
-  const info=arr=>{let mn=Infinity,mx=-Infinity,sum=0,cnt=0;for(const a of arr){if(a&&!a.X&&a.fret>0){mn=Math.min(mn,a.fret);mx=Math.max(mx,a.fret);sum+=a.fret;cnt++;}}return{span:mx<0?0:mx-mn,hand:cnt?sum/cnt:null};};
-  function rec(i){
-    if(i===ps.length){const si=info(cur);voic.push({assign:cur.map(a=>({...a})),hand:si.hand,intrinsic:W.SPAN*si.span+W.POS*(si.hand||0)});return;}
+  const topHalf=Math.ceil(ps.length/2);
+  const MAXDROP=2;
+  const info=arr=>{let mn=Infinity,mx=-Infinity,sum=0,cnt=0,drop=0;for(const a of arr){if(!a)continue;if(a.X){drop++;continue;}if(a.fret>0){mn=Math.min(mn,a.fret);mx=Math.max(mx,a.fret);sum+=a.fret;cnt++;}}return{span:mx<0?0:mx-mn,minF:cnt?mn:0,hand:cnt?sum/cnt:null,drop};};
+  function rec(i,dropped){
+    if(i===ps.length){const si=info(cur);voic.push({assign:cur.map(a=>({...a})),hand:si.hand,minF:si.minF,intrinsic:W.SPANTIE*si.span+W.HIGHPOS*si.minF+W.POS*(si.hand||0)+W.DROP*si.drop});return;}
     const usable=cand[i].filter(c=>!used[c.string]);
-    if(!usable.length){cur[i]={...X};rec(i+1);cur[i]=null;return;}
-    for(const c of usable){cur[i]=c;used[c.string]=true;if(info(cur).span<=HAND_SPAN)rec(i+1);used[c.string]=false;cur[i]=null;}
+    for(const c of usable){cur[i]=c;used[c.string]=true;if(info(cur).span<=HAND_SPAN)rec(i+1,dropped);used[c.string]=false;cur[i]=null;}
+    if(!usable.length||(i<topHalf&&dropped<MAXDROP)){cur[i]={...X};rec(i+1,dropped+1);cur[i]=null;}
   }
-  rec(0);
-  if(!voic.length)voic.push({assign:ps.map(()=>({...X})),hand:null,intrinsic:0});
+  rec(0,0);
+  if(!voic.length)voic.push({assign:ps.map(()=>({...X})),hand:null,minF:0,intrinsic:0});
   const seen=new Set(),uniq=[];voic.sort((a,b)=>a.intrinsic-b.intrinsic);
   for(const v of voic){const sig=v.assign.map(a=>a.X?"x":a.string+":"+a.fret).join(",");if(!seen.has(sig)){seen.add(sig);uniq.push(v);}if(uniq.length>=TOPM)break;}
   return {ps,voicings:uniq};

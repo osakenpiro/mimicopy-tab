@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>耳コピ→TAB 自動採譜 v0 — mimicopy-tab</title>
-<meta name="description" content="音声ファイルをブラウザ内でMIDI化し、運指最適化でギターTAB譜に自動採譜。アップロード不要。#全人類UX改善計画" />
+<title>耳コピ→TAB 自動採譜 v0.2 — mimicopy-tab</title>
+<meta name="description" content="音声ファイルをブラウザ内でMIDI化し、運指最適化でギター/ベース/ウクレレのTAB譜に自動採譜。アップロード不要。#全人類UX改善計画" />
 <style>
   :root{
     --void:#0a0a12; --void2:#0f0f1a; --panel:#15151f; --line:#26263a;
@@ -21,7 +21,6 @@
     color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
     line-height:1.6; min-height:100vh; padding:28px 18px 80px;
   }
-  /* faint starfield */
   body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.5;
     background-image:radial-gradient(1px 1px at 20% 30%,#fff2,transparent),radial-gradient(1px 1px at 70% 60%,#fff1,transparent),radial-gradient(1px 1px at 40% 80%,#fff2,transparent),radial-gradient(1px 1px at 85% 20%,#fff1,transparent),radial-gradient(1px 1px at 55% 45%,#fff1,transparent);}
   .wrap{max-width:920px;margin:0 auto}
@@ -31,7 +30,7 @@
   .sub{color:var(--ink-dim);font-size:.86rem;margin:0}
   .lantern{font-size:1.4rem}
   .card{background:linear-gradient(180deg,var(--panel),var(--void2));border:1px solid var(--line);border-radius:14px;padding:18px 18px;margin:14px 0;box-shadow:0 1px 0 #ffffff08 inset}
-  .drop{display:block;width:100%;border:1.5px dashed var(--gold-dim);border-radius:12px;padding:26px 16px;text-align:center;cursor:pointer;transition:.15s;background:#ffffff03}
+  .drop{border:1.5px dashed var(--gold-dim);border-radius:12px;padding:26px 16px;text-align:center;cursor:pointer;transition:.15s;background:#ffffff03}
   .drop:hover,.drop.hot{border-color:var(--gold);background:rgba(212,168,83,.06)}
   .drop b{color:var(--gold)}
   .drop small{color:var(--ink-dim);display:block;margin-top:6px}
@@ -71,8 +70,8 @@
 <div class="wrap">
   <header>
     <div class="lantern">🏮</div>
-    <h1>耳コピ→<span class="g">TAB</span> 自動採譜 <span class="pill">v0</span></h1>
-    <p class="sub">音声ファイル → AIでMIDI化 → 運指最適化でギターTAB譜へ。全部ブラウザの中。アップロードなし。</p>
+    <h1>耳コピ→<span class="g">TAB</span> 自動採譜 <span class="pill">v0.2</span></h1>
+    <p class="sub">音声ファイル → AIでMIDI化 → 運指最適化でTAB譜へ。ギター / ベース / ウクレレ対応。全部ブラウザの中。アップロードなし。</p>
   </header>
 
   <div class="card">
@@ -87,6 +86,14 @@
   <div class="card">
     <h3>採譜設定</h3>
     <div class="controls">
+      <label class="ctl">チューニング / 楽器
+        <select id="tuning">
+          <option value="guitar" selected>ギター 標準 (EADGBE)</option>
+          <option value="dropd">ギター ドロップD (DADGBE)</option>
+          <option value="bass">ベース (EADG)</option>
+          <option value="ukulele">ウクレレ (GCEA)</option>
+        </select>
+      </label>
       <label class="ctl">モード
         <select id="mode">
           <option value="mono">単音（メロディ）</option>
@@ -109,7 +116,7 @@
         <input type="range" id="frame" min="0.05" max="0.9" step="0.05" value="0.3" />
       </label>
       <label class="ctl">最短ノート長(frame)
-        <input type="number" id="minLen" value="5" min="1" max="30" />
+        <input type="number" id="minLen" value="8" min="1" max="30" />
       </label>
     </div>
     <div class="row">
@@ -123,7 +130,7 @@
 
   <div class="card hide" id="tabCard">
     <h3>TAB譜 <span class="pill" id="tabMeta"></span></h3>
-    <p class="note-meta">標準チューニング EADGBE ／ フレット番号はカポ基準。タイミングは非量子化（原演奏のニュアンス保持）。</p>
+    <p class="note-meta" id="tabNote">フレット番号はカポ基準。タイミングは非量子化（原演奏のニュアンス保持）。</p>
     <pre class="tab" id="tabOut"></pre>
   </div>
 
@@ -138,26 +145,21 @@
   </div>
 
   <footer>
-    採譜エンジン = <a href="https://github.com/spotify/basic-pitch-ts" target="_blank" rel="noopener">Spotify Basic Pitch</a>（Apache-2.0, TF.js）／ 運指ソルバ = 自前（フレットボードDP）<br/>
+    採譜エンジン = <a href="https://github.com/spotify/basic-pitch-ts" target="_blank" rel="noopener">Spotify Basic Pitch</a>（Apache-2.0, TF.js）／ 運指ソルバ = 自前（フレットボードDP・和音間通し最適化）<br/>
     #全人類UX改善計画 ・ TRBP T柱 Hi-Me TooL ・ <a href="https://github.com/osakenpiro/mimicopy-tab" target="_blank" rel="noopener">source</a>
   </footer>
 </div>
 
 <script type="module">
-/* ============================================================
-   mimicopy-tab v0  —  audio → MIDI(Basic Pitch) → TAB(自前ソルバ)
-   ============================================================ */
-
 const MODEL_URL = "https://cdn.jsdelivr.net/npm/@spotify/basic-pitch@1.0.1/model/model.json";
 const BP_ESM    = "https://esm.sh/@spotify/basic-pitch@1.0.1";
 const MIDI_ESM  = "https://esm.sh/@tonejs/midi@2.0.28";
 
-/* ---- DOM ---- */
 const $ = id => document.getElementById(id);
 const drop=$("drop"), fileInput=$("file"), runBtn=$("run");
 const loadStatus=$("loadStatus"), statusEl=$("status");
 const bar=$("bar"), barFill=$("barFill");
-const tabCard=$("tabCard"), tabOut=$("tabOut"), tabMeta=$("tabMeta");
+const tabCard=$("tabCard"), tabOut=$("tabOut"), tabMeta=$("tabMeta"), tabNote=$("tabNote");
 const listCard=$("listCard"), noteTbody=$("noteTable").querySelector("tbody");
 const dlMidi=$("dlMidi"), dlTab=$("dlTab");
 
@@ -168,7 +170,6 @@ function setStatus(html,cls){ statusEl.innerHTML = cls?`<span class="${cls}">${h
 function setProgress(p){ bar.classList.add("show"); barFill.style.width=Math.round(p*100)+"%"; }
 function hideProgress(){ bar.classList.remove("show"); barFill.style.width="0"; }
 
-/* ---- lazy module + model ---- */
 let _bp=null, _model=null, _midiLib=null;
 async function bpLib(){ if(!_bp) _bp=await import(BP_ESM); return _bp; }
 async function model(){
@@ -179,7 +180,6 @@ async function model(){
 }
 async function midiLib(){ if(!_midiLib) _midiLib=await import(MIDI_ESM); return _midiLib; }
 
-/* preload so 疎通 is visible immediately */
 (async()=>{
   try{
     loadStatus.innerHTML='<span class="g">採譜エンジン読込中…</span>（初回 ~1MB / 以後キャッシュ）';
@@ -192,7 +192,6 @@ async function midiLib(){ if(!_midiLib) _midiLib=await import(MIDI_ESM); return 
   }
 })();
 
-/* ---- file handling ---- */
 let currentFile=null;
 drop.addEventListener("dragover",e=>{e.preventDefault();drop.classList.add("hot");});
 drop.addEventListener("dragleave",()=>drop.classList.remove("hot"));
@@ -201,22 +200,24 @@ fileInput.addEventListener("change",e=>{if(e.target.files[0])pickFile(e.target.f
 function pickFile(f){ currentFile=f; drop.querySelector("b").textContent="🎵 "+f.name; refreshRun(); }
 function refreshRun(){ runBtn.disabled = !(currentFile && _model); }
 
-/* ---- audio prep: decode → mono → 22050 resample ---- */
 async function prepareAudio(arrayBuffer){
   const target=22050;
-  const ctx=new (window.AudioContext||window.webkitAudioContext)();
-  const decoded=await ctx.decodeAudioData(arrayBuffer.slice(0));
-  await ctx.close();
+  const actx=new (window.AudioContext||window.webkitAudioContext)();
+  const decoded=await actx.decodeAudioData(arrayBuffer.slice(0));
+  await actx.close();
   const n=decoded.length, chs=decoded.numberOfChannels;
   const mono=new Float32Array(n);
   for(let i=0;i<n;i++){let s=0;for(let c=0;c<chs;c++)s+=decoded.getChannelData(c)[i];mono[i]=s/chs;}
   if(decoded.sampleRate===target) return mono;
-  const ratio=target/decoded.sampleRate, m=Math.floor(n*ratio), out=new Float32Array(m);
-  for(let i=0;i<m;i++){const pos=i/ratio,idx=Math.floor(pos),frac=pos-idx;const a=mono[idx]||0,b=mono[idx+1]||mono[idx]||0;out[i]=a+(b-a)*frac;}
-  return out;
+  const outLen=Math.max(1,Math.round(n*target/decoded.sampleRate));
+  const off=new OfflineAudioContext(1,outLen,target);
+  const srcBuf=off.createBuffer(1,n,decoded.sampleRate);
+  srcBuf.copyToChannel(mono,0);
+  const node=off.createBufferSource(); node.buffer=srcBuf; node.connect(off.destination); node.start();
+  const rendered=await off.startRendering();
+  return rendered.getChannelData(0).slice();
 }
 
-/* ---- inference ---- */
 async function audioToNotes(audioData,onsetTh,frameTh,minLen){
   const md=await model();
   const { outputToNotesPoly, addPitchBendsToNoteEvents, noteFramesToTime }=await bpLib();
@@ -228,32 +229,32 @@ async function audioToNotes(audioData,onsetTh,frameTh,minLen){
            outputToNotesPoly(frames,onsets,onsetTh,frameTh,minLen)));
 }
 
-/* ============================================================
-   自前ソルバ：MIDI → TAB（フレットボード × DP / バックトラック）
-   ============================================================ */
-const STD_TUNING=[40,45,50,55,59,64];           // 弦 0=6th(低E) … 5=1st(高e)
-const STRING_LABELS=["E","A","D","G","B","e"];
+/* ===== 自前ソルバ v0.2：N弦一般化 / 単音Viterbi / 和音=top-M列挙＋和音間DP通し最適化 ===== */
+const PRESETS={
+  guitar:  {tuning:[40,45,50,55,59,64], labels:["E","A","D","G","B","e"], name:"ギター標準 EADGBE"},
+  dropd:   {tuning:[38,45,50,55,59,64], labels:["D","A","D","G","B","e"], name:"ドロップD DADGBE"},
+  bass:    {tuning:[28,33,38,43],       labels:["E","A","D","G"],         name:"ベース EADG"},
+  ukulele: {tuning:[67,60,64,69],       labels:["G","C","E","A"],         name:"ウクレレ GCEA"},
+};
 const NOTE_NAMES=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
 const noteName=m=>NOTE_NAMES[((m%12)+12)%12]+(Math.floor(m/12)-1);
 const W={FRET:1.0,STRING:0.4,POS:0.15,SPAN:1.2,HANDMOVE:0.6};
-const HAND_SPAN=4, CHORD_TOL=0.06;
+const HAND_SPAN=4, CHORD_TOL=0.06, TOPM=8;
+const X={string:-1,fret:-1,X:true};
 
-function candidates(midi,capo,maxFret){
+function candidates(midi,tuning,capo,maxFret){
   const out=[];
-  for(let s=0;s<6;s++){const open=STD_TUNING[s]+capo;const fret=midi-open;if(fret>=0&&fret<=maxFret)out.push({string:s,fret});}
+  for(let s=0;s<tuning.length;s++){const open=tuning[s]+capo;const fret=midi-open;if(fret>=0&&fret<=maxFret)out.push({string:s,fret});}
   return out;
 }
-const X={string:-1,fret:-1,X:true};
 const nodeCost=c=> c.X?0:(c.fret===0?0:W.POS*c.fret);
 function edgeCost(a,b){
   if(a.X||b.X) return 0;
   const h=(a.fret===0||b.fret===0)?0:Math.abs(a.fret-b.fret);
   return W.FRET*h + W.STRING*Math.abs(a.string-b.string);
 }
-
-/* 単音：層状グラフ上のViterbi（総移動コスト最小） */
-function solveMono(seq,capo,maxFret){
-  const layers=seq.map(m=>{const c=candidates(m,capo,maxFret);return c.length?c:[X];});
+function solveMono(seq,tuning,capo,maxFret){
+  const layers=seq.map(m=>{const c=candidates(m,tuning,capo,maxFret);return c.length?c:[X];});
   const n=layers.length; if(!n) return [];
   const dp=[],bp=[];
   for(let i=0;i<n;i++){
@@ -269,32 +270,38 @@ function solveMono(seq,capo,maxFret){
   const path=new Array(n);for(let i=n-1;i>=0;i--){path[i]=layers[i][bk];bk=bp[i][bk]<0?0:bp[i][bk];}
   return path.map((p,i)=>({midi:seq[i],string:p.string,fret:p.fret,X:!!p.X}));
 }
-
-/* 和音：弦割当バックトラック＋スパン制約＋前和音への近さ */
-function solveChord(pitches,prevHand,capo,maxFret){
-  const ps=[...new Set(pitches)].sort((a,b)=>b-a).slice(0,6);   // 高音優先・最大6
-  const cand=ps.map(p=>candidates(p,capo,maxFret));
-  const used=new Array(6).fill(false), cur=new Array(ps.length).fill(null);
-  let best=null;
-  const spanInfo=()=>{let mn=Infinity,mx=-Infinity,sum=0,cnt=0;
-    for(const a of cur){if(a&&!a.X&&a.fret>0){mn=Math.min(mn,a.fret);mx=Math.max(mx,a.fret);sum+=a.fret;cnt++;}}
-    return{span:mx<0?0:mx-mn,minF:cnt?mn:null,hand:cnt?sum/cnt:null};};
-  const spanOk=()=>spanInfo().span<=HAND_SPAN;
+function chordVoicings(pitches,tuning,capo,maxFret){
+  const ps=[...new Set(pitches)].sort((a,b)=>b-a).slice(0,tuning.length);
+  const cand=ps.map(p=>candidates(p,tuning,capo,maxFret));
+  const used=new Array(tuning.length).fill(false), cur=new Array(ps.length).fill(null);
+  const voic=[];
+  const info=arr=>{let mn=Infinity,mx=-Infinity,sum=0,cnt=0;for(const a of arr){if(a&&!a.X&&a.fret>0){mn=Math.min(mn,a.fret);mx=Math.max(mx,a.fret);sum+=a.fret;cnt++;}}return{span:mx<0?0:mx-mn,hand:cnt?sum/cnt:null};};
   function rec(i){
-    if(i===ps.length){const si=spanInfo();let sc=W.SPAN*si.span+W.POS*(si.hand||0);
-      if(prevHand!=null&&si.hand!=null)sc+=W.HANDMOVE*Math.abs(si.hand-prevHand);
-      if(!best||sc<best.sc)best={sc,assign:cur.map(a=>({...a}))};return;}
+    if(i===ps.length){const si=info(cur);voic.push({assign:cur.map(a=>({...a})),hand:si.hand,intrinsic:W.SPAN*si.span+W.POS*(si.hand||0)});return;}
     const usable=cand[i].filter(c=>!used[c.string]);
     if(!usable.length){cur[i]={...X};rec(i+1);cur[i]=null;return;}
-    for(const c of usable){cur[i]=c;used[c.string]=true;if(spanOk())rec(i+1);used[c.string]=false;cur[i]=null;}
+    for(const c of usable){cur[i]=c;used[c.string]=true;if(info(cur).span<=HAND_SPAN)rec(i+1);used[c.string]=false;cur[i]=null;}
   }
   rec(0);
-  const assign=best?best.assign:ps.map(()=>({...X}));
-  const si=(()=>{let sum=0,cnt=0,mn=Infinity;for(const a of assign){if(a&&!a.X&&a.fret>0){sum+=a.fret;cnt++;mn=Math.min(mn,a.fret);}}return{minF:cnt?mn:null};})();
-  return{notes:ps.map((p,i)=>({midi:p,string:assign[i].string,fret:assign[i].fret,X:!!assign[i].X})),nextHand:si.minF!=null?si.minF:prevHand};
+  if(!voic.length)voic.push({assign:ps.map(()=>({...X})),hand:null,intrinsic:0});
+  const seen=new Set(),uniq=[];voic.sort((a,b)=>a.intrinsic-b.intrinsic);
+  for(const v of voic){const sig=v.assign.map(a=>a.X?"x":a.string+":"+a.fret).join(",");if(!seen.has(sig)){seen.add(sig);uniq.push(v);}if(uniq.length>=TOPM)break;}
+  return {ps,voicings:uniq};
 }
-
-/* onset近接でチャンク化 */
+function solveChordSequence(chordSets,tuning,capo,maxFret){
+  const chords=chordSets.map(set=>chordVoicings(set,tuning,capo,maxFret));
+  const n=chords.length; if(!n) return [];
+  const dp=[],bp=[];
+  for(let i=0;i<n;i++){const V=chords[i].voicings;dp.push([]);bp.push([]);
+    for(let a=0;a<V.length;a++){
+      if(i===0){dp[i][a]=V[a].intrinsic;bp[i][a]=-1;continue;}
+      let best=Infinity,bb=0;const Vp=chords[i-1].voicings;
+      for(let b=0;b<Vp.length;b++){let trans=0;const h0=Vp[b].hand,h1=V[a].hand;if(h0!=null&&h1!=null)trans=W.HANDMOVE*Math.abs(h1-h0);const v=dp[i-1][b]+trans;if(v<best){best=v;bb=b;}}
+      dp[i][a]=V[a].intrinsic+best;bp[i][a]=bb;}}
+  let bk=0,bv=Infinity;for(let a=0;a<dp[n-1].length;a++)if(dp[n-1][a]<bv){bv=dp[n-1][a];bk=a;}
+  const pick=new Array(n);for(let i=n-1;i>=0;i--){pick[i]=bk;bk=bp[i][bk]<0?0:bp[i][bk];}
+  return chords.map((c,i)=>{const v=c.voicings[pick[i]];return c.ps.map((p,j)=>({midi:p,string:v.assign[j].string,fret:v.assign[j].fret,X:!!v.assign[j].X}));});
+}
 function groupChords(notes,tol){
   const sorted=[...notes].sort((a,b)=>a.startTimeSeconds-b.startTimeSeconds);
   const groups=[];let cur=null;
@@ -304,14 +311,13 @@ function groupChords(notes,tol){
   }
   return groups;
 }
-
-/* ---- TAB renderer ---- */
-function renderTab(columns){
+function renderTab(columns,labels){
+  const N=labels.length;
   if(!columns.length) return "(ノートが検出されませんでした)";
-  const widths=columns.map(col=>{let w=1;for(let s=0;s<6;s++){const v=col[s];if(v!=null){w=Math.max(w,String(v).length);}}return w;});
+  const widths=columns.map(col=>{let w=1;for(let s=0;s<N;s++){const v=col[s];if(v!=null){w=Math.max(w,String(v).length);}}return w;});
   const lines=[];
-  for(let s=5;s>=0;s--){
-    let line=STRING_LABELS[s]+"|";
+  for(let s=N-1;s>=0;s--){
+    let line=labels[s]+"|";
     for(let c=0;c<columns.length;c++){
       const v=columns[c][s], w=widths[c];
       let cell = (v==null) ? "-".repeat(w) : (String(v)+"-".repeat(w-String(v).length));
@@ -323,7 +329,6 @@ function renderTab(columns){
   return lines.join("\n");
 }
 
-/* ---- orchestrate ---- */
 let lastNotes=null, lastTabText="";
 runBtn.addEventListener("click",async()=>{
   if(!currentFile) return;
@@ -340,48 +345,49 @@ runBtn.addEventListener("click",async()=>{
     if(!notes.length){ setStatus("ノートが検出されませんでした。感度を下げる/単旋律の素材で再試行を。","warn"); runBtn.disabled=false; return; }
     lastNotes=notes;
 
+    const preset=PRESETS[$("tuning").value]||PRESETS.guitar;
+    const tuning=preset.tuning, labels=preset.labels;
     const capo=+$("capo").value, maxFret=+$("maxFret").value, mode=$("mode").value;
     let columns=[], rows=[];
 
     if(mode==="mono"){
-      // 各onsetグループの最高音をメロディ採用
       const groups=groupChords(notes,CHORD_TOL).map(g=>{
         const top=g.notes.reduce((a,b)=>b.pitchMidi>a.pitchMidi?b:a); return {...top}; });
       const seq=groups.map(g=>g.pitchMidi);
-      const placed=solveMono(seq,capo,maxFret);
+      const placed=solveMono(seq,tuning,capo,maxFret);
       placed.forEach((p,i)=>{
-        const col=new Array(6).fill(null); if(!p.X) col[p.string]=p.fret; columns.push(col);
+        const col=new Array(tuning.length).fill(null); if(!p.X) col[p.string]=p.fret; columns.push(col);
         rows.push({t:groups[i].startTimeSeconds,dur:groups[i].durationSeconds,midi:p.midi,p});
       });
     } else {
       const groups=groupChords(notes,CHORD_TOL);
-      let hand=null;
-      groups.forEach(g=>{
-        const res=solveChord(g.notes.map(n=>n.pitchMidi),hand,capo,maxFret); hand=res.nextHand;
-        const col=new Array(6).fill(null);
-        res.notes.forEach(p=>{ if(!p.X) col[p.string]=p.fret; });
+      const chordSets=groups.map(g=>g.notes.map(n=>n.pitchMidi));
+      const seqRes=solveChordSequence(chordSets,tuning,capo,maxFret);
+      seqRes.forEach((resNotes,gi)=>{
+        const col=new Array(tuning.length).fill(null);
+        resNotes.forEach(p=>{ if(!p.X) col[p.string]=p.fret; });
         columns.push(col);
-        res.notes.forEach(p=>rows.push({t:g.t,dur:g.notes[0].durationSeconds,midi:p.midi,p}));
+        resNotes.forEach(p=>rows.push({t:groups[gi].t,dur:groups[gi].notes[0].durationSeconds,midi:p.midi,p}));
       });
     }
 
-    lastTabText=renderTab(columns);
+    lastTabText=renderTab(columns,labels);
     tabOut.textContent=lastTabText;
-    tabMeta.textContent=`${columns.length}列 / カポ${capo} / ${mode==="mono"?"単音":"和音"}`;
+    tabMeta.textContent=`${columns.length}列 / ${preset.name} / カポ${capo} / ${mode==="mono"?"単音":"和音"}`;
+    tabNote.textContent=`チューニング ${labels.join("")}（低音→高音）／ フレット番号はカポ基準。タイミングは非量子化（原演奏のニュアンス保持）。`;
     tabCard.classList.remove("hide");
 
-    // note list
     noteTbody.innerHTML="";
     rows.sort((a,b)=>a.t-b.t).forEach((r,i)=>{
       const tr=document.createElement("tr");
-      const sf = r.p.X ? `<span>範囲外</span>` : `${STRING_LABELS[r.p.string]}弦 ${r.p.fret}f`;
+      const sf = r.p.X ? `<span>範囲外</span>` : `${labels[r.p.string]}弦 ${r.p.fret}f`;
       tr.innerHTML=`<td>${i+1}</td><td>${r.t.toFixed(2)}</td><td>${r.dur.toFixed(2)}</td><td>${noteName(r.midi)}</td><td class="${r.p.X?'x':''}">${sf}</td>`;
       noteTbody.appendChild(tr);
     });
     listCard.classList.remove("hide");
 
     const xCount=rows.filter(r=>r.p.X).length;
-    setStatus(`<span class="ok">●</span> 採譜完了：${notes.length}音検出${xCount?` / うち${xCount}音は音域外（カポ/最大フレット調整を）`:""}`);
+    setStatus(`<span class="ok">●</span> 採譜完了：${notes.length}音検出${xCount?` / うち${xCount}音は音域外（カポ/最大フレット/チューニング調整を）`:""}`);
     dlMidi.classList.remove("hide"); dlTab.classList.remove("hide");
   }catch(err){
     hideProgress(); console.error("[mimicopy-tab] transcribe failed",err);
@@ -389,7 +395,6 @@ runBtn.addEventListener("click",async()=>{
   }finally{ runBtn.disabled=false; }
 });
 
-/* ---- exports ---- */
 dlTab.addEventListener("click",async()=>{
   try{ await navigator.clipboard.writeText(lastTabText); setStatus('<span class="ok">●</span> TABをコピーしました'); }
   catch{ setStatus("コピー不可（手動で選択を）","warn"); }
@@ -406,4 +411,6 @@ dlMidi.addEventListener("click",async()=>{
     URL.revokeObjectURL(a.href);
   }catch(err){ setStatus("MIDI書き出し失敗: "+(err&&err.message||err),"warn"); }
 });
-<
+</script>
+</body>
+</html>

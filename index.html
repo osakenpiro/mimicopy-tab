@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>耳コピ→TAB 自動採譜 v0.2 — mimicopy-tab</title>
-<meta name="description" content="音声ファイルをブラウザ内でMIDI化し、運指最適化でギター/ベース/ウクレレのTAB譜に自動採譜。アップロード不要。#全人類UX改善計画" />
+<title>耳コピ→TAB 自動採譜 v0.3 — mimicopy-tab</title>
+<meta name="description" content="音声ファイルをブラウザ内でMIDI化し、運指最適化でギター/ベース/ウクレレのTAB譜に自動採譜。指番号・セーハも自動提案。アップロード不要。#全人類UX改善計画" />
 <style>
   :root{
     --void:#0a0a12; --void2:#0f0f1a; --panel:#15151f; --line:#26263a;
@@ -70,7 +70,7 @@
 <div class="wrap">
   <header>
     <div class="lantern">🏮</div>
-    <h1>耳コピ→<span class="g">TAB</span> 自動採譜 <span class="pill">v0.2</span></h1>
+    <h1>耳コピ→<span class="g">TAB</span> 自動採譜 <span class="pill">v0.3</span></h1>
     <p class="sub">音声ファイル → AIでMIDI化 → 運指最適化でTAB譜へ。ギター / ベース / ウクレレ対応。全部ブラウザの中。アップロードなし。</p>
   </header>
 
@@ -118,6 +118,12 @@
       <label class="ctl">最短ノート長(frame)
         <input type="number" id="minLen" value="8" min="1" max="30" />
       </label>
+      <label class="ctl">指番号・セーハ
+        <select id="fingers">
+          <option value="on" selected>表示する</option>
+          <option value="off">表示しない</option>
+        </select>
+      </label>
     </div>
     <div class="row">
       <button class="go" id="run" disabled>採譜する</button>
@@ -134,11 +140,18 @@
     <pre class="tab" id="tabOut"></pre>
   </div>
 
+  <div class="card hide" id="fingerCard">
+    <h3>運指（指番号・セーハ） <span class="pill">自動提案</span></h3>
+    <p class="note-meta">①人差し ②中指 ③薬指 ④小指 ／ 0＝開放（指なし）。同じ列で同じ番号が並ぶ＝<b>セーハ</b>（1本の指で複数弦を同時押さえ）。あくまで自動提案——弾きやすさで上書きOK。</p>
+    <pre class="tab" id="fingerOut"></pre>
+    <p class="note-meta" id="barreNote"></p>
+  </div>
+
   <div class="card hide" id="listCard">
     <h3>ノート一覧</h3>
     <div style="max-height:320px;overflow:auto">
       <table id="noteTable">
-        <thead><tr><th>#</th><th>時刻(s)</th><th>長さ</th><th>音名</th><th>弦-フレット</th></tr></thead>
+        <thead><tr><th>#</th><th>時刻(s)</th><th>長さ</th><th>音名</th><th>弦-フレット</th><th>指</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
@@ -161,6 +174,7 @@ const loadStatus=$("loadStatus"), statusEl=$("status");
 const bar=$("bar"), barFill=$("barFill");
 const tabCard=$("tabCard"), tabOut=$("tabOut"), tabMeta=$("tabMeta"), tabNote=$("tabNote");
 const listCard=$("listCard"), noteTbody=$("noteTable").querySelector("tbody");
+const fingerCard=$("fingerCard"), fingerOut=$("fingerOut"), barreNote=$("barreNote");
 const dlMidi=$("dlMidi"), dlTab=$("dlTab");
 
 $("onset").addEventListener("input",e=>$("onV").textContent=(+e.target.value).toFixed(2));
@@ -227,6 +241,38 @@ async function audioToNotes(audioData,onsetTh,frameTh,minLen){
     (p)=>setProgress(p));
   return noteFramesToTime(addPitchBendsToNoteEvents(contours,
            outputToNotesPoly(frames,onsets,onsetTh,frameTh,minLen)));
+}
+
+/* ===== v0.3 運指レイヤ：ソルバ出力(列×弦→フレット)から指番号・セーハを後段算出（採譜・ソルバ本体は不変） ===== */
+const FINGER_GLYPH=["0","①","②","③","④"];
+function fingerChordColumn(col){
+  const fretted=[]; col.forEach((f,s)=>{ if(f!=null&&f>0) fretted.push({s,f}); });
+  const distinct=[...new Set(fretted.map(x=>x.f))].sort((a,b)=>a-b);
+  const fof=new Map(); distinct.forEach((f,i)=>fof.set(f,Math.min(i+1,4)));
+  const fingers=col.map(f=> f==null?null:(f===0?0:fof.get(f)));
+  const barres=distinct.filter(f=>fretted.filter(x=>x.f===f).length>=2)
+    .map(f=>({fret:f,finger:fof.get(f),strings:fretted.filter(x=>x.f===f).map(x=>x.s)}));
+  return {fingers,barres};
+}
+function fingerMonoColumns(columns){
+  const out=[]; const recent=[];
+  for(const col of columns){
+    const s=col.findIndex(v=>v!=null);
+    if(s<0){ out.push(col.map(()=>null)); continue; }
+    const fret=col[s];
+    if(fret===0){ out.push(col.map(v=> v==null?null:0)); continue; }
+    recent.push(fret); if(recent.length>4) recent.shift();
+    const anchor=Math.min(...recent);
+    const fg=Math.min(4,Math.max(1,fret-anchor+1));
+    out.push(col.map((v,i)=> v==null?null:(i===s?fg:0)));
+  }
+  return out;
+}
+function computeFingers(columns,mode){
+  if(mode==="mono") return {fingerCols:fingerMonoColumns(columns),barres:[]};
+  const fingerCols=[], barres=[];
+  columns.forEach((col,ci)=>{ const r=fingerChordColumn(col); fingerCols.push(r.fingers); r.barres.forEach(b=>barres.push({col:ci+1,...b})); });
+  return {fingerCols,barres};
 }
 
 /* ===== 自前ソルバ v0.2：N弦一般化 / 単音Viterbi / 和音=top-M列挙＋和音間DP通し最適化 ===== */
@@ -331,10 +377,10 @@ function renderTab(columns,labels){
   return lines.join("\n");
 }
 
-let lastNotes=null, lastTabText="";
+let lastNotes=null, lastTabText="", lastFingerCols=null;
 runBtn.addEventListener("click",async()=>{
   if(!currentFile) return;
-  runBtn.disabled=true; tabCard.classList.add("hide"); listCard.classList.add("hide");
+  runBtn.disabled=true; tabCard.classList.add("hide"); fingerCard.classList.add("hide"); listCard.classList.add("hide");
   dlMidi.classList.add("hide"); dlTab.classList.add("hide");
   try{
     setStatus("音声をデコード中…"); setProgress(0.02);
@@ -359,7 +405,7 @@ runBtn.addEventListener("click",async()=>{
       const placed=solveMono(seq,tuning,capo,maxFret);
       placed.forEach((p,i)=>{
         const col=new Array(tuning.length).fill(null); if(!p.X) col[p.string]=p.fret; columns.push(col);
-        rows.push({t:groups[i].startTimeSeconds,dur:groups[i].durationSeconds,midi:p.midi,p});
+        rows.push({t:groups[i].startTimeSeconds,dur:groups[i].durationSeconds,midi:p.midi,p,col:columns.length-1});
       });
     } else {
       const groups=groupChords(notes,CHORD_TOL);
@@ -369,7 +415,8 @@ runBtn.addEventListener("click",async()=>{
         const col=new Array(tuning.length).fill(null);
         resNotes.forEach(p=>{ if(!p.X) col[p.string]=p.fret; });
         columns.push(col);
-        resNotes.forEach(p=>rows.push({t:groups[gi].t,dur:groups[gi].notes[0].durationSeconds,midi:p.midi,p}));
+        const ci=columns.length-1;
+        resNotes.forEach(p=>rows.push({t:groups[gi].t,dur:groups[gi].notes[0].durationSeconds,midi:p.midi,p,col:ci}));
       });
     }
 
@@ -379,11 +426,22 @@ runBtn.addEventListener("click",async()=>{
     tabNote.textContent=`チューニング ${labels.join("")}（低音→高音）／ フレット番号はカポ基準。タイミングは非量子化（原演奏のニュアンス保持）。`;
     tabCard.classList.remove("hide");
 
+    const fgRes=computeFingers(columns,mode); lastFingerCols=fgRes.fingerCols;
+    if($("fingers").value==="on"){
+      fingerOut.textContent=renderTab(fgRes.fingerCols,labels);
+      barreNote.textContent=fgRes.barres.length
+        ? "セーハ: "+fgRes.barres.map(b=>`列${b.col}＝${b.fret}fを${FINGER_GLYPH[b.finger]}でバレ（${b.strings.map(s=>labels[s]).join("")}弦）`).join(" ／ ")
+        : (mode==="mono"?"単音モード：指番号は移動ポジション基準の自動提案（直近フレット幅から推定）。":"セーハ無し（各音は別々の指で押さえられます）。");
+      fingerCard.classList.remove("hide");
+    } else { fingerCard.classList.add("hide"); }
+
     noteTbody.innerHTML="";
     rows.sort((a,b)=>a.t-b.t).forEach((r,i)=>{
       const tr=document.createElement("tr");
       const sf = r.p.X ? `<span>範囲外</span>` : `${labels[r.p.string]}弦 ${r.p.fret}f`;
-      tr.innerHTML=`<td>${i+1}</td><td>${r.t.toFixed(2)}</td><td>${r.dur.toFixed(2)}</td><td>${noteName(r.midi)}</td><td class="${r.p.X?'x':''}">${sf}</td>`;
+      const fgv = (r.p.X||r.col==null||!lastFingerCols||!lastFingerCols[r.col]) ? null : lastFingerCols[r.col][r.p.string];
+      const fgStr = (fgv==null) ? "—" : (fgv===0?"開":FINGER_GLYPH[fgv]);
+      tr.innerHTML=`<td>${i+1}</td><td>${r.t.toFixed(2)}</td><td>${r.dur.toFixed(2)}</td><td>${noteName(r.midi)}</td><td class="${r.p.X?'x':''}">${sf}</td><td>${fgStr}</td>`;
       noteTbody.appendChild(tr);
     });
     listCard.classList.remove("hide");

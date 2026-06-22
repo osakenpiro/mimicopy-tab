@@ -31,7 +31,7 @@
   .sub{color:var(--ink-dim);font-size:.86rem;margin:0}
   .lantern{font-size:1.4rem}
   .card{background:linear-gradient(180deg,var(--panel),var(--void2));border:1px solid var(--line);border-radius:14px;padding:18px 18px;margin:14px 0;box-shadow:0 1px 0 #ffffff08 inset}
-  .drop{border:1.5px dashed var(--gold-dim);border-radius:12px;padding:26px 16px;text-align:center;cursor:pointer;transition:.15s;background:#ffffff03}
+  .drop{display:block;width:100%;border:1.5px dashed var(--gold-dim);border-radius:12px;padding:26px 16px;text-align:center;cursor:pointer;transition:.15s;background:#ffffff03}
   .drop:hover,.drop.hot{border-color:var(--gold);background:rgba(212,168,83,.06)}
   .drop b{color:var(--gold)}
   .drop small{color:var(--ink-dim);display:block;margin-top:6px}
@@ -406,6 +406,4 @@ dlMidi.addEventListener("click",async()=>{
     URL.revokeObjectURL(a.href);
   }catch(err){ setStatus("MIDI書き出し失敗: "+(err&&err.message||err),"warn"); }
 });
-</script>
-</body>
-</html>
+<

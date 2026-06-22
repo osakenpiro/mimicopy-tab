@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>耳コピ→TAB 自動採譜 v0.3 — mimicopy-tab</title>
-<meta name="description" content="音声ファイルをブラウザ内でMIDI化し、運指最適化でギター/ベース/ウクレレのTAB譜に自動採譜。指番号・セーハも自動提案。アップロード不要。#全人類UX改善計画" />
+<title>耳コピ→TAB 自動採譜 v0.4 — mimicopy-tab</title>
+<meta name="description" content="音声ファイルをブラウザ内でMIDI化し、運指最適化でギター/ベース/ウクレレのTAB譜に自動採譜。指番号・セーハ・BPM量子化も対応。アップロード不要。#全人類UX改善計画" />
 <style>
   :root{
     --void:#0a0a12; --void2:#0f0f1a; --panel:#15151f; --line:#26263a;
@@ -70,7 +70,7 @@
 <div class="wrap">
   <header>
     <div class="lantern">🏮</div>
-    <h1>耳コピ→<span class="g">TAB</span> 自動採譜 <span class="pill">v0.3</span></h1>
+    <h1>耳コピ→<span class="g">TAB</span> 自動採譜 <span class="pill">v0.4</span></h1>
     <p class="sub">音声ファイル → AIでMIDI化 → 運指最適化でTAB譜へ。ギター / ベース / ウクレレ対応。全部ブラウザの中。アップロードなし。</p>
   </header>
 
@@ -124,6 +124,24 @@
           <option value="off">表示しない</option>
         </select>
       </label>
+      <label class="ctl">BPM量子化
+        <select id="quant">
+          <option value="off" selected>オフ（非量子化）</option>
+          <option value="on">オン（拍にスナップ）</option>
+        </select>
+      </label>
+      <label class="ctl">BPM
+        <input type="number" id="bpm" value="120" min="40" max="300" step="1" />
+      </label>
+      <label class="ctl">分解能
+        <select id="subdiv">
+          <option value="1/4">1/4（4分）</option>
+          <option value="1/8" selected>1/8（8分）</option>
+          <option value="1/8t">1/8 三連</option>
+          <option value="1/16">1/16（16分）</option>
+          <option value="1/16t">1/16 三連</option>
+        </select>
+      </label>
     </div>
     <div class="row">
       <button class="go" id="run" disabled>採譜する</button>
@@ -151,7 +169,7 @@
     <h3>ノート一覧</h3>
     <div style="max-height:320px;overflow:auto">
       <table id="noteTable">
-        <thead><tr><th>#</th><th>時刻(s)</th><th>長さ</th><th>音名</th><th>弦-フレット</th><th>指</th></tr></thead>
+        <thead><tr><th>#</th><th>時刻(s)</th><th>拍</th><th>長さ</th><th>音名</th><th>弦-フレット</th><th>指</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
@@ -241,6 +259,31 @@ async function audioToNotes(audioData,onsetTh,frameTh,minLen){
     (p)=>setProgress(p));
   return noteFramesToTime(addPitchBendsToNoteEvents(contours,
            outputToNotesPoly(frames,onsets,onsetTh,frameTh,minLen)));
+}
+
+/* ===== v0.4 BPM量子化：Basic Pitch出力のstart/durを拍グリッドにスナップ（groupChordsの前段・ソルバ本体は不変） ===== */
+const SUBDIV_UPB={"1/4":1,"1/8":2,"1/16":4,"1/8t":3,"1/16t":6};
+const SUBDIV_LABEL={"1/4":"1/4","1/8":"1/8","1/16":"1/16","1/8t":"1/8三連","1/16t":"1/16三連"};
+function quantizeNotes(notes,bpm,subdiv){
+  const unitsPerBeat=SUBDIV_UPB[subdiv]||2;
+  const beat=60/bpm, step=beat/unitsPerBeat;
+  if(!notes.length||!(bpm>0)||!isFinite(step)||step<=0) return {notes:notes.slice(),info:null};
+  const origin=Math.min(...notes.map(n=>n.startTimeSeconds));
+  const out=notes.map(n=>{
+    const qs=Math.round((n.startTimeSeconds-origin)/step)*step+origin;
+    const qd=Math.max(step,Math.round((n.durationSeconds||step)/step)*step);
+    return {...n,startTimeSeconds:qs,durationSeconds:qd};
+  });
+  return {notes:out,info:{origin,step,unitsPerBeat,beat,bpm,subdiv}};
+}
+function beatLabel(t,info){
+  if(!info) return "—";
+  const idx=Math.round((t-info.origin)/info.step);
+  const beats=idx/info.unitsPerBeat;
+  const bar=Math.floor(beats/4)+1;
+  const b=beats-(bar-1)*4+1;
+  const s=Number.isInteger(b)?String(b):((+b.toFixed(2))+"").replace(/\.?0+$/,"");
+  return bar+":"+s;
 }
 
 /* ===== v0.3 運指レイヤ：ソルバ出力(列×弦→フレット)から指番号・セーハを後段算出（採譜・ソルバ本体は不変） ===== */
@@ -393,13 +436,17 @@ runBtn.addEventListener("click",async()=>{
     if(!notes.length){ setStatus("ノートが検出されませんでした。感度を下げる/単旋律の素材で再試行を。","warn"); runBtn.disabled=false; return; }
     lastNotes=notes;
 
+    const quantOn=$("quant").value==="on", bpm=+$("bpm").value, subdiv=$("subdiv").value;
+    let procNotes=notes, qInfo=null, gtol=CHORD_TOL;
+    if(quantOn && bpm>0){ const q=quantizeNotes(notes,bpm,subdiv); procNotes=q.notes; qInfo=q.info; if(qInfo){ gtol=Math.min(CHORD_TOL,qInfo.step/2); lastNotes=procNotes; } }
+
     const preset=PRESETS[$("tuning").value]||PRESETS.guitar;
     const tuning=preset.tuning, labels=preset.labels;
     const capo=+$("capo").value, maxFret=+$("maxFret").value, mode=$("mode").value;
     let columns=[], rows=[];
 
     if(mode==="mono"){
-      const groups=groupChords(notes,CHORD_TOL).map(g=>{
+      const groups=groupChords(procNotes,gtol).map(g=>{
         const top=g.notes.reduce((a,b)=>b.pitchMidi>a.pitchMidi?b:a); return {...top}; });
       const seq=groups.map(g=>g.pitchMidi);
       const placed=solveMono(seq,tuning,capo,maxFret);
@@ -408,7 +455,7 @@ runBtn.addEventListener("click",async()=>{
         rows.push({t:groups[i].startTimeSeconds,dur:groups[i].durationSeconds,midi:p.midi,p,col:columns.length-1});
       });
     } else {
-      const groups=groupChords(notes,CHORD_TOL);
+      const groups=groupChords(procNotes,gtol);
       const chordSets=groups.map(g=>g.notes.map(n=>n.pitchMidi));
       const seqRes=solveChordSequence(chordSets,tuning,capo,maxFret);
       seqRes.forEach((resNotes,gi)=>{
@@ -422,8 +469,10 @@ runBtn.addEventListener("click",async()=>{
 
     lastTabText=renderTab(columns,labels);
     tabOut.textContent=lastTabText;
-    tabMeta.textContent=`${columns.length}列 / ${preset.name} / カポ${capo} / ${mode==="mono"?"単音":"和音"}`;
-    tabNote.textContent=`チューニング ${labels.join("")}（低音→高音）／ フレット番号はカポ基準。タイミングは非量子化（原演奏のニュアンス保持）。`;
+    tabMeta.textContent=`${columns.length}列 / ${preset.name} / カポ${capo} / ${mode==="mono"?"単音":"和音"}${quantOn?` / ♩=${bpm} ${SUBDIV_LABEL[subdiv]||subdiv}`:""}`;
+    tabNote.textContent=quantOn
+      ? `チューニング ${labels.join("")}（低音→高音）／ フレット番号はカポ基準。BPM${bpm}・${SUBDIV_LABEL[subdiv]||subdiv}で量子化（拍にスナップ）。`
+      : `チューニング ${labels.join("")}（低音→高音）／ フレット番号はカポ基準。タイミングは非量子化（原演奏のニュアンス保持）。`;
     tabCard.classList.remove("hide");
 
     const fgRes=computeFingers(columns,mode); lastFingerCols=fgRes.fingerCols;
@@ -441,7 +490,7 @@ runBtn.addEventListener("click",async()=>{
       const sf = r.p.X ? `<span>範囲外</span>` : `${labels[r.p.string]}弦 ${r.p.fret}f`;
       const fgv = (r.p.X||r.col==null||!lastFingerCols||!lastFingerCols[r.col]) ? null : lastFingerCols[r.col][r.p.string];
       const fgStr = (fgv==null) ? "—" : (fgv===0?"開":FINGER_GLYPH[fgv]);
-      tr.innerHTML=`<td>${i+1}</td><td>${r.t.toFixed(2)}</td><td>${r.dur.toFixed(2)}</td><td>${noteName(r.midi)}</td><td class="${r.p.X?'x':''}">${sf}</td><td>${fgStr}</td>`;
+      tr.innerHTML=`<td>${i+1}</td><td>${r.t.toFixed(2)}</td><td>${beatLabel(r.t,qInfo)}</td><td>${r.dur.toFixed(2)}</td><td>${noteName(r.midi)}</td><td class="${r.p.X?'x':''}">${sf}</td><td>${fgStr}</td>`;
       noteTbody.appendChild(tr);
     });
     listCard.classList.remove("hide");

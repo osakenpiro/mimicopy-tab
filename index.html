@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>耳コピ→TAB 自動採譜 v0.4 — mimicopy-tab</title>
-<meta name="description" content="音声ファイルをブラウザ内でMIDI化し、運指最適化でギター/ベース/ウクレレのTAB譜に自動採譜。指番号・セーハ・BPM量子化も対応。アップロード不要。#全人類UX改善計画" />
+<title>耳コピ→TAB 自動採譜 v0.5 — mimicopy-tab</title>
+<meta name="description" content="音声ファイルをブラウザ内でMIDI化し、運指最適化でギター/ベース/ウクレレのTAB譜に自動採譜。指番号・セーハ・BPM量子化・BPM自動推定も対応。アップロード不要。#全人類UX改善計画" />
 <style>
   :root{
     --void:#0a0a12; --void2:#0f0f1a; --panel:#15151f; --line:#26263a;
@@ -64,13 +64,14 @@
   footer{text-align:center;color:var(--ink-dim);font-size:.72rem;margin-top:26px;line-height:1.7}
   footer a{color:var(--gold-dim);text-decoration:none}
   .note-meta{color:var(--ink-dim);font-size:.78rem;margin:0 0 10px}
-</style>
+  .est{display:block;margin-top:4px;font-size:11px;color:#9aa0a6;font-variant-numeric:tabular-nums;line-height:1.5}
+  </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <div class="lantern">🏮</div>
-    <h1>耳コピ→<span class="g">TAB</span> 自動採譜 <span class="pill">v0.4</span></h1>
+    <h1>耳コピ→<span class="g">TAB</span> 自動採譜 <span class="pill">v0.5</span></h1>
     <p class="sub">音声ファイル → AIでMIDI化 → 運指最適化でTAB譜へ。ギター / ベース / ウクレレ対応。全部ブラウザの中。アップロードなし。</p>
   </header>
 
@@ -132,6 +133,7 @@
       </label>
       <label class="ctl">BPM
         <input type="number" id="bpm" value="120" min="40" max="300" step="1" />
+        <small id="bpmEst" class="est"></small>
       </label>
       <label class="ctl">分解能
         <select id="subdiv">
@@ -145,6 +147,8 @@
     </div>
     <div class="row">
       <button class="go" id="run" disabled>採譜する</button>
+      <button class="ghost hide" id="estBpm">🎯 BPM自動推定</button>
+      <button class="ghost hide" id="resnap">🔁 拍に再スナップ</button>
       <button class="ghost hide" id="dlMidi">MIDIをダウンロード</button>
       <button class="ghost hide" id="dlTab">TABをコピー</button>
     </div>
@@ -194,6 +198,7 @@ const tabCard=$("tabCard"), tabOut=$("tabOut"), tabMeta=$("tabMeta"), tabNote=$(
 const listCard=$("listCard"), noteTbody=$("noteTable").querySelector("tbody");
 const fingerCard=$("fingerCard"), fingerOut=$("fingerOut"), barreNote=$("barreNote");
 const dlMidi=$("dlMidi"), dlTab=$("dlTab");
+const bpmEstEl=$("bpmEst"), estBpmBtn=$("estBpm"), resnapBtn=$("resnap");
 
 $("onset").addEventListener("input",e=>$("onV").textContent=(+e.target.value).toFixed(2));
 $("frame").addEventListener("input",e=>$("frV").textContent=(+e.target.value).toFixed(2));
@@ -420,25 +425,106 @@ function renderTab(columns,labels){
   return lines.join("\n");
 }
 
-let lastNotes=null, lastTabText="", lastFingerCols=null;
-runBtn.addEventListener("click",async()=>{
-  if(!currentFile) return;
-  runBtn.disabled=true; tabCard.classList.add("hide"); fingerCard.classList.add("hide"); listCard.classList.add("hide");
-  dlMidi.classList.add("hide"); dlTab.classList.add("hide");
-  try{
-    setStatus("音声をデコード中…"); setProgress(0.02);
-    const buf=await currentFile.arrayBuffer();
-    const audio=await prepareAudio(buf);
-    setStatus('<span class="g">AIが聴音中…</span>（長さに応じ数秒〜十数秒）');
-    const onsetTh=+$("onset").value, frameTh=+$("frame").value, minLen=+$("minLen").value;
-    const notes=await audioToNotes(audio,onsetTh,frameTh,minLen);
-    hideProgress();
-    if(!notes.length){ setStatus("ノートが検出されませんでした。感度を下げる/単旋律の素材で再試行を。","warn"); runBtn.disabled=false; return; }
-    lastNotes=notes;
+let lastNotes=null, lastTabText="", lastFingerCols=null, lastRawNotes=null;
+/* ===== v0.5 BPM自動推定：オンセット自己相関+オクターブ畳込でテンポ推定。自信度はFloat(0..1)。採譜/ソルバ/量子化は不変 ===== */
+function estimateBPM(notes, opts){
+  opts = opts||{};
+  const minBPM = opts.min ?? 55, maxBPM = opts.max ?? 210;
+  const out = {bpm:null, confidence:0, candidates:[], reason:""};
+  if(!notes || notes.length < 4){ out.reason="few-notes"; return out; }
+  let arr = notes.map(n=>({t:+n.startTimeSeconds, amp:(n.amplitude!=null&&isFinite(+n.amplitude))?+n.amplitude:0.7}))
+                 .filter(o=>isFinite(o.t)).sort((a,b)=>a.t-b.t);
+  if(arr.length<4){ out.reason="few-onsets"; return out; }
+  // cluster near-simultaneous (chord) onsets ~45ms, keep loudest amp as accent
+  const CLUS=0.045, ev=[];
+  for(const o of arr){
+    const last=ev.length?ev[ev.length-1]:null;
+    if(last && (o.t-last.tLast)<=CLUS){ last.w+=1; last.sum+=o.t; last.tLast=o.t; last.t=last.sum/last.w; last.amp=Math.max(last.amp,o.amp); }
+    else ev.push({t:o.t, sum:o.t, tLast:o.t, w:1, amp:o.amp});
+  }
+  if(ev.length<4){ out.reason="few-onsets"; return out; }
+  const t0=ev[0].t, tN=ev[ev.length-1].t, span=tN-t0;
+  if(!(span>0)){ out.reason="zero-span"; return out; }
+  const dt=0.01, nb=Math.floor(span/dt)+1;
+  const env=new Float64Array(nb);
+  for(const e of ev){
+    const b=Math.round((e.t-t0)/dt), wt=Math.min(3,e.w)*(0.4+1.2*e.amp);
+    if(b>=0&&b<nb){ env[b]+=wt; if(b>0)env[b-1]+=0.4*wt; if(b+1<nb)env[b+1]+=0.4*wt; }
+  }
+  const lagMin=Math.max(2, Math.round((60/maxBPM)/dt));
+  const lagMax=Math.min(nb-2, Math.round((60/minBPM)/dt));
+  if(lagMax<=lagMin+1){ out.reason="range"; return out; }
+  const ac=new Float64Array(lagMax+2);
+  for(let lag=lagMin; lag<=lagMax; lag++){
+    let s=0; const lim=nb-lag;
+    for(let i=0;i<lim;i++) s+=env[i]*env[i+lag];
+    ac[lag]= lim>0 ? s/lim : 0;
+  }
+  const peaks=[];
+  for(let lag=lagMin+1; lag<lagMax; lag++)
+    if(ac[lag]>ac[lag-1] && ac[lag]>=ac[lag+1] && ac[lag]>0) peaks.push(lag);
+  if(!peaks.length){ out.reason="no-peak"; return out; }
+  const vals=[]; for(let lag=lagMin; lag<=lagMax; lag++) vals.push(ac[lag]);
+  const sorted=[...vals].sort((a,b)=>a-b);
+  const median=sorted[Math.floor(sorted.length/2)];
+  const acMax=sorted[sorted.length-1];
+  // seed: strongest direct autocorr peak (prominence)
+  const acAt=(lag)=>{ lag=Math.round(lag); return (lag>=lagMin&&lag<=lagMax)?ac[lag]:0; };
+  // seed from the FINEST strong peak (within 90% of max), then fold down by octaves
+  const acMaxPk=Math.max(...peaks.map(l=>ac[l]));
+  const strong=peaks.filter(l=>ac[l]>=0.9*acMaxPk);
+  const bestLag=Math.min(...strong);
+  const yl=ac[bestLag-1]||0, yc=ac[bestLag], yr=ac[bestLag+1]||0;
+  const den=(yl-2*yc+yr); let delta=den!==0?0.5*(yl-yr)/den:0; delta=Math.max(-1,Math.min(1,delta));
+  const bestBPM=60/((bestLag+delta)*dt);
+  const prior=(b)=>Math.exp(-Math.pow((b-110)/72,2));
+  const gridR=(bpm,div)=>{ const beat=60/bpm, sub=beat/(div||2); let re=0,im=0,ws=0;
+    for(const e of ev){ const w=e.w*(0.4+1.2*e.amp); const ph=2*Math.PI*(((e.t-t0)%sub)/sub); re+=w*Math.cos(ph); im+=w*Math.sin(ph); ws+=w; }
+    return ws>0?Math.hypot(re,im)/ws:0; };
+  // octave candidates supported by actual signal; among strong levels pick most foot-tappable (prior)
+  const raw=[];
+  for(const f of [0.5,1,2]){
+    const b=bestBPM*f; if(b<minBPM-1e-9||b>maxBPM+1e-9) continue;
+    raw.push({bpm:b, ac:acAt((60/b)/dt)});
+  }
+  if(!raw.length) raw.push({bpm:Math.max(minBPM,Math.min(maxBPM,bestBPM)), ac:ac[bestLag]});
+  const acMaxC=Math.max(...raw.map(c=>c.ac));
+  const elig=raw.filter(c=>c.ac>=0.55*acMaxC);
+  elig.forEach(c=>{ c.score=prior(c.bpm)*(0.4+c.ac/(acMaxC||1)); });
+  elig.sort((a,b)=>b.score-a.score);
+  const chosen=elig[0];
+  // confidence = snappability at finest subdivision (1/16 grid) x prominence x span coverage
+  const R=Math.max(gridR(chosen.bpm,4), gridR(chosen.bpm,2));
+  const promNorm=(acMax>median)?Math.max(0,(ac[bestLag]-median)/(acMax-median)):0;
+  const nBeats=span/(60/chosen.bpm);
+  const spanFactor=Math.min(1, nBeats/4);
+  const confidence=Math.max(0,Math.min(1,(0.25*promNorm+0.75*R)*spanFactor));
+  out.bpm=Math.round(chosen.bpm);
+  out.confidence=+confidence.toFixed(3);
+  out.candidates=elig.slice(0,3).map(c=>({bpm:Math.round(c.bpm), conf:+gridR(c.bpm,4).toFixed(2)}));
+  out.reason="ok";
+  return out;
+}
 
+function confBar(v){ const n=Math.max(0,Math.min(5,Math.round(v*5))); return "▰".repeat(n)+"▱".repeat(5-n); }
+function showEstimate(r){
+  if(!r||r.bpm==null){ bpmEstEl.textContent="推定不可（音数不足）"; return; }
+  const lc=r.confidence<0.35?' <span class="warn">低信頼</span>':'';
+  bpmEstEl.innerHTML=`推定 ♩=${r.bpm}・自信度 ${confBar(r.confidence)} ${r.confidence.toFixed(2)}${lc}`;
+  bpmEstEl.title="候補: "+r.candidates.map(c=>`♩=${c.bpm}(${c.conf})`).join(" / ");
+}
+function autoEstimateAndFill(rawNotes){
+  const r=estimateBPM(rawNotes);
+  if(r.bpm!=null && r.confidence>=0.35){ $("bpm").value=r.bpm; }
+  showEstimate(r);
+  return r;
+}
+
+function renderFromNotes(rawNotes){
+    lastNotes=rawNotes;
     const quantOn=$("quant").value==="on", bpm=+$("bpm").value, subdiv=$("subdiv").value;
-    let procNotes=notes, qInfo=null, gtol=CHORD_TOL;
-    if(quantOn && bpm>0){ const q=quantizeNotes(notes,bpm,subdiv); procNotes=q.notes; qInfo=q.info; if(qInfo){ gtol=Math.min(CHORD_TOL,qInfo.step/2); lastNotes=procNotes; } }
+    let procNotes=rawNotes, qInfo=null, gtol=CHORD_TOL;
+    if(quantOn && bpm>0){ const q=quantizeNotes(rawNotes,bpm,subdiv); procNotes=q.notes; qInfo=q.info; if(qInfo){ gtol=Math.min(CHORD_TOL,qInfo.step/2); lastNotes=procNotes; } }
 
     const preset=PRESETS[$("tuning").value]||PRESETS.guitar;
     const tuning=preset.tuning, labels=preset.labels;
@@ -496,8 +582,27 @@ runBtn.addEventListener("click",async()=>{
     listCard.classList.remove("hide");
 
     const xCount=rows.filter(r=>r.p.X).length;
-    setStatus(`<span class="ok">●</span> 採譜完了：${notes.length}音検出${xCount?` / うち${xCount}音は音域外（カポ/最大フレット/チューニング調整を）`:""}`);
+    setStatus(`<span class="ok">●</span> 採譜完了：${rawNotes.length}音検出${xCount?` / うち${xCount}音は音域外（カポ/最大フレット/チューニング調整を）`:""}`);
     dlMidi.classList.remove("hide"); dlTab.classList.remove("hide");
+    estBpmBtn.classList.remove("hide"); resnapBtn.classList.remove("hide");
+}
+
+runBtn.addEventListener("click",async()=>{
+  if(!currentFile) return;
+  runBtn.disabled=true; tabCard.classList.add("hide"); fingerCard.classList.add("hide"); listCard.classList.add("hide");
+  dlMidi.classList.add("hide"); dlTab.classList.add("hide");
+  try{
+    setStatus("音声をデコード中…"); setProgress(0.02);
+    const buf=await currentFile.arrayBuffer();
+    const audio=await prepareAudio(buf);
+    setStatus('<span class="g">AIが聴音中…</span>（長さに応じ数秒〜十数秒）');
+    const onsetTh=+$("onset").value, frameTh=+$("frame").value, minLen=+$("minLen").value;
+    const notes=await audioToNotes(audio,onsetTh,frameTh,minLen);
+    hideProgress();
+    if(!notes.length){ setStatus("ノートが検出されませんでした。感度を下げる/単旋律の素材で再試行を。","warn"); runBtn.disabled=false; return; }
+    lastRawNotes=notes;
+    autoEstimateAndFill(notes);
+    renderFromNotes(notes);
   }catch(err){
     hideProgress(); console.error("[mimicopy-tab] transcribe failed",err);
     setStatus("失敗: "+(err&&err.message||err),"warn");
@@ -519,6 +624,17 @@ dlMidi.addEventListener("click",async()=>{
     a.download=(currentFile?currentFile.name.replace(/\.[^.]+$/,""):"mimicopy")+".mid"; a.click();
     URL.revokeObjectURL(a.href);
   }catch(err){ setStatus("MIDI書き出し失敗: "+(err&&err.message||err),"warn"); }
+});
+
+estBpmBtn.addEventListener("click",()=>{
+  if(!lastRawNotes){ setStatus("先に「採譜する」を実行してね。","warn"); return; }
+  autoEstimateAndFill(lastRawNotes);
+  setStatus('<span class="ok">●</span> BPMを推定して欄に入れました（量子化オン＋🔁再スナップで反映）');
+});
+resnapBtn.addEventListener("click",()=>{
+  if(!lastRawNotes){ setStatus("先に「採譜する」を実行してね。","warn"); return; }
+  try{ renderFromNotes(lastRawNotes); setStatus('<span class="ok">●</span> 現在のBPM/分解能で再スナップしました（再採譜なし）'); }
+  catch(err){ console.error("[mimicopy-tab] resnap failed",err); setStatus("再スナップ失敗: "+(err&&err.message||err),"warn"); }
 });
 </script>
 </body>
